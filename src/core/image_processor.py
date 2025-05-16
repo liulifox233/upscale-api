@@ -31,6 +31,31 @@ def get_processing_semaphore() -> asyncio.Semaphore:
         raise RuntimeError("并发控制信号量尚未初始化")
     return processing_semaphore
 
+def is_color_image(image: Image.Image, threshold: float = 0.05) -> bool:
+    """
+    判断图像是否为彩色图像
+    
+    参数:
+    - image: 输入图片
+    - threshold: 判断为彩色图像的阈值，0-1之间，默认0.05
+    
+    返回:
+    - bool: True表示彩色图像，False表示灰度图像
+    """
+    img_array = np.array(image)
+
+    if len(img_array.shape) != 3 or img_array.shape[2] < 3:
+        return False
+    
+    r, g, b = img_array[:, :, 0], img_array[:, :, 1], img_array[:, :, 2]
+    
+    std_per_pixel = np.std([r, g, b], axis=0)
+    
+    std_threshold = 255 * threshold
+    color_ratio = np.mean(std_per_pixel > std_threshold)
+    
+    return color_ratio >= 0.01
+
 async def process_image(
     image: Image.Image,
     model_name: str,
@@ -60,8 +85,17 @@ async def process_image(
     semaphore = get_processing_semaphore()
     
     try:
-        # 使用信号量限制并发处理
         async with semaphore:
+            if model_name.lower() == "auto":
+                is_color = is_color_image(image)
+                if is_color:
+                    auto_model_name = config.get("auto_color_model", "4x_IllustrationJaNai_V1_ESRGAN_135k")
+                    logger.info(f"检测到彩色图像，自动选择模型: {auto_model_name}")
+                else:
+                    auto_model_name = config.get("auto_gray_model", "2x_MangaJaNai_1500p_V1_ESRGAN_90k")
+                    logger.info(f"检测到灰度图像，自动选择模型: {auto_model_name}")
+                model_name = auto_model_name
+            
             logger.info(f"开始处理图像，使用模型: {model_name}")
             
             # 加载模型

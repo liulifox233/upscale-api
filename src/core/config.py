@@ -31,5 +31,7 @@ CONFIG = {
     "max_concurrent_tasks": 5,  # 最大并发处理数量
     "memory_threshold": 0,  # 内存使用率阈值，超过此值将触发内存回收（百分比）
     "cleanup_interval": 5,  # 清理间隔（处理N次图像后执行一次清理）
-    "max_model_cache_size": 3,  # 模型缓存大小限制
+    "max_model_cache_size": 3,  # 模型缓存大小限制,
+    "auto_color_model": "4x_IllustrationJaNai_V1_ESRGAN_135k",  # 自动模式下用于彩色图像的模型
+    "auto_gray_model": "2x_MangaJaNai_1500p_V1_ESRGAN_90k",  # 自动模式下用于灰度图像的模型
 }
