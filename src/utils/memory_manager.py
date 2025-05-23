@@ -16,8 +16,6 @@ class MemoryManager:
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.processing_counter = 0
-        # 使用 weakref.WeakValueDictionary 替代普通字典存储模型
-        # 这样当模型不再被使用时，它们可以被垃圾回收
         self._model_cache = weakref.WeakValueDictionary()
         logger.info("内存管理器初始化完成")
         

@@ -9,7 +9,7 @@ import requests
 from urllib.parse import urlparse
 from fastapi import HTTPException
 from PIL import Image
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 logger = logging.getLogger("upscale-api")
 
@@ -28,12 +28,13 @@ def is_valid_url(url: str) -> bool:
     except:
         return False
 
-def download_image(url: str, allowed_mime_types: set) -> Image.Image:
+def download_image(url: str, allowed_mime_types: set, headers: Optional[Dict[str, Any]] = None) -> Image.Image:
     """从URL下载图片
     
     Args:
         url: 图片URL
         allowed_mime_types: 允许的MIME类型
+        headers: 要转发的请求头
         
     Returns:
         下载的图片对象
@@ -42,7 +43,16 @@ def download_image(url: str, allowed_mime_types: set) -> Image.Image:
         HTTPException: 下载失败或图片类型不支持
     """
     try:
-        response = requests.get(url, stream=True)
+        # 过滤掉一些不需要转发的头信息
+        if headers:
+            # 移除host、content-length等不应该转发的头
+            filtered_headers = {k: v for k, v in headers.items() 
+                               if k.lower() not in ['host', 'content-length', 'connection']}
+            logger.info(f"使用以下头信息请求图像: {filtered_headers}")
+            response = requests.get(url, stream=True, headers=filtered_headers)
+        else:
+            response = requests.get(url, stream=True)
+            
         response.raise_for_status()
         
         # 验证内容类型

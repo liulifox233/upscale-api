@@ -11,6 +11,7 @@ from src.utils.system_info import print_system_info
 from src.utils.memory_manager import init_memory_manager, get_memory_manager
 from src.core.image_processor import init_processing_semaphore
 from src.utils.tools import cleanup_temp_files
+from src.utils.image_cache import init_image_cache, get_image_cache
 from src.api.routes import router
 
 # 配置日志
@@ -38,10 +39,13 @@ async def lifespan(app: FastAPI):
     # 初始化内存管理器
     init_memory_manager(CONFIG)
     
+    # 初始化图像缓存（使用临时目录作为缓存目录）
+    init_image_cache(CONFIG["temp_dir"])
+    
     # 初始化并发控制信号量
     init_processing_semaphore(CONFIG["max_concurrent_tasks"])
     
-    logger.info(f"创建临时输出目录: {TEMP_OUTPUT_DIR}")
+    logger.info(f"创建临时输出/缓存目录: {TEMP_OUTPUT_DIR}")
     logger.info("应用程序初始化完成")
     
     yield  # 应用程序运行期间
@@ -49,11 +53,15 @@ async def lifespan(app: FastAPI):
     # 应用程序关闭时执行的清理操作
     logger.info("应用程序关闭，执行清理操作...")
     
+    # 清理图像缓存
+    image_cache = get_image_cache()
+    image_cache.clear()
+    
     # 清理模型缓存
     memory_manager = get_memory_manager()
     memory_manager.cleanup_model_cache()
     
-    # 清理临时文件
+    # 清理临时文件（同时清理缓存文件）
     cleanup_temp_files(TEMP_OUTPUT_DIR)
     
     logger.info("清理操作完成，应用程序已关闭")

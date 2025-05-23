@@ -3,7 +3,7 @@ API路由模块：定义所有的API端点
 """
 import os
 import logging
-from fastapi import APIRouter, UploadFile, File, HTTPException, Query
+from fastapi import APIRouter, UploadFile, File, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from PIL import Image
 import io
@@ -14,6 +14,7 @@ from src.utils.system_info import get_device, get_memory_usage
 from src.models.model_manager import get_available_models
 from src.utils.tools import is_valid_url, download_image
 from src.core.image_processor import process_image, get_processing_semaphore
+from src.utils.image_cache import get_image_cache
 
 router = APIRouter()
 logger = logging.getLogger("upscale-api")
@@ -33,6 +34,7 @@ async def list_available_models():
 
 @router.get("/upscale/", response_class=FileResponse)
 async def upscale_image(
+    request: Request,
     file: UploadFile = File(None),
     url: str = Query(None, description="Image URL to download and process"),
     model: str = Query(CONFIG["default_model"], description="Model to use for upscaling"),
@@ -53,6 +55,10 @@ async def upscale_image(
     注意: 必须提供file或url中的一个
     """
     try:
+        # 获取请求头
+        headers = dict(request.headers)
+        logger.info(f"接收到请求，headers: {headers}")
+        
         # 验证输入
         if not file and not url:
             raise HTTPException(
@@ -74,8 +80,31 @@ async def upscale_image(
                 detail=f"Unsupported output format. Supported: {', '.join(CONFIG['supported_output_formats'].keys())}"
             )
         
+        # 如果是URL请求，检查缓存
+        if url:
+            if not is_valid_url(url):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid URL provided"
+                )
+            
+            # 检查缓存
+            image_cache = get_image_cache()
+            cached_path = image_cache.get(url, model, format, quality)
+            
+            if cached_path:
+                logger.info(f"使用缓存的处理结果: {cached_path}")
+                return FileResponse(
+                    cached_path,
+                    media_type=CONFIG["supported_output_formats"][format],
+                    filename=os.path.basename(cached_path)
+                )
+            
+            logger.info(f"从URL下载图像: {url}")
+            image = download_image(url, CONFIG["allowed_mime_types"], headers)
+        
         # 处理文件上传
-        if file:
+        else:
             # 验证文件类型
             if file.content_type not in CONFIG["allowed_mime_types"]:
                 raise HTTPException(
@@ -87,17 +116,6 @@ async def upscale_image(
             # 读取上传的图片
             contents = await file.read()
             image = Image.open(io.BytesIO(contents)).convert("RGB")
-        
-        # 处理URL
-        else:
-            if not is_valid_url(url):
-                raise HTTPException(
-                    status_code=400,
-                    detail="Invalid URL provided"
-                )
-            
-            logger.info(f"从URL下载图像: {url}")
-            image = download_image(url, CONFIG["allowed_mime_types"])
         
         # 临时覆盖配置，如果指定了半精度参数
         config_override = None
@@ -116,6 +134,12 @@ async def upscale_image(
 
         # 关闭PIL图像对象，释放内存
         image.close()
+        
+        # 如果是URL请求，将结果添加到缓存
+        if url:
+            image_cache = get_image_cache()
+            cached_path = image_cache.put(url, model, format, quality, output_path)
+            output_path = cached_path  # 使用缓存的路径
         
         # 返回处理后的图片
         return FileResponse(

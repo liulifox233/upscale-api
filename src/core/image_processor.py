@@ -44,17 +44,23 @@ def is_color_image(image: Image.Image, threshold: float = 0.05) -> bool:
     """
     img_array = np.array(image)
 
-    if len(img_array.shape) != 3 or img_array.shape[2] < 3:
-        return False
-    
-    r, g, b = img_array[:, :, 0], img_array[:, :, 1], img_array[:, :, 2]
-    
-    std_per_pixel = np.std([r, g, b], axis=0)
-    
-    std_threshold = 255 * threshold
-    color_ratio = np.mean(std_per_pixel > std_threshold)
-    
-    return color_ratio >= 0.01
+    try:
+        if len(img_array.shape) != 3 or img_array.shape[2] < 3:
+            return False
+        
+        r, g, b = img_array[:, :, 0], img_array[:, :, 1], img_array[:, :, 2]
+        
+        std_per_pixel = np.std([r, g, b], axis=0)
+        
+        std_threshold = 255 * threshold
+        color_ratio = np.mean(std_per_pixel > std_threshold)
+        
+        return color_ratio >= 0.01
+    finally:
+        del img_array
+        if 'img_array' in locals():
+            del locals()['img_array']
+
 
 async def process_image(
     image: Image.Image,
@@ -86,8 +92,39 @@ async def process_image(
     
     try:
         async with semaphore:
+            # 检查是否为彩色图像
+            is_color = is_color_image(image)
+            
+            # 检查图像分辨率
+            width, height = image.size
+            image_resolution = max(width, height)
+            
+            # 如果是高分辨率彩色图像（1500p以上），直接保存原图不进行处理
+            high_res_threshold = config.get("high_res_threshold", 1500)
+            skip_upscale = is_color and image_resolution >= high_res_threshold
+            
+            if skip_upscale:
+                logger.info(f"检测到高分辨率彩色图像 ({image_resolution}p)，跳过超分辨率处理")
+                
+                # 生成临时文件路径
+                with tempfile.NamedTemporaryFile(
+                    suffix=f".{output_format}", 
+                    prefix="original_",
+                    dir=config["temp_dir"],
+                    delete=False
+                ) as temp_file:
+                    output_path = temp_file.name
+                
+                # 保存原始图片为指定输出格式
+                save_kwargs = {}
+                if output_format in ["jpg", "webp"]:
+                    save_kwargs["quality"] = quality
+                
+                image.save(output_path, **save_kwargs)
+                logger.info(f"处理完成，保存原图: {output_path}")
+                return output_path
+                
             if model_name.lower() == "auto":
-                is_color = is_color_image(image)
                 if is_color:
                     auto_model_name = config.get("auto_color_model", "4x_IllustrationJaNai_V1_ESRGAN_135k")
                     logger.info(f"检测到彩色图像，自动选择模型: {auto_model_name}")
