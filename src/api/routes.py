@@ -43,7 +43,7 @@ async def upscale_image(
     half_precision: bool = Query(None, description="是否启用FP16半精度量化（覆盖全局配置）")
 ):
     """
-    图片超分辨率处理API
+    图片超分辨率处理API (GET方法)
     
     参数:
     - file: 上传的图片文件 (可选)
@@ -53,6 +53,74 @@ async def upscale_image(
     - quality: 输出质量 (1-100, 仅对jpg/webp有效)
     
     注意: 必须提供file或url中的一个
+    """
+    return await _process_upscale(request, file, url, model, format, quality, half_precision)
+
+@router.post("/upscale/", response_class=FileResponse)
+async def upscale_image_post(
+    request: Request,
+    model: str = Query(CONFIG["default_model"], description="Model to use for upscaling"),
+    format: str = Query(CONFIG["default_format"], description="Output image format"),
+    quality: int = Query(90, ge=1, le=100, description="Output quality (1-100, for JPG/WEBP)"),
+    half_precision: bool = Query(None, description="是否启用FP16半精度量化（覆盖全局配置）"),
+    url: str = Query(None, description="Image URL to download and process")
+):
+    """
+    图片超分辨率处理API (POST方法)
+    
+    参数:
+    - 请求体: 原始图片数据 (Content-Type: application/octet-stream 或其他图片类型)
+    - model: 使用的模型名称 (默认: RealESRGAN)
+    - format: 输出格式 [png, jpg, webp] (默认: png)
+    - quality: 输出质量 (1-100, 仅对jpg/webp有效)
+    - url: 要处理的图片URL (可选)
+    
+    注意: 必须提供请求体中的图片数据或url参数中的一个
+    """
+    logger.info("处理POST请求的图片超分辨率处理")
+    file = None
+    body_data = await request.body()
+    
+    if body_data and not url:
+        # 获取内容类型，默认为application/octet-stream
+        content_type = request.headers.get("content-type", "application/octet-stream")
+        
+        if content_type == "application/octet-stream":
+            # 根据图片头部字节尝试判断图片类型
+            if body_data.startswith(b'\xff\xd8\xff'):  # JPEG
+                content_type = "image/jpeg"
+            elif body_data.startswith(b'\x89PNG\r\n\x1a\n'):  # PNG
+                content_type = "image/png"
+            elif body_data.startswith(b'RIFF') and b'WEBP' in body_data[0:12]:  # WEBP
+                content_type = "image/webp"
+            else:
+                content_type = "image/jpeg"
+                
+            logger.info(f"收到application/octet-stream数据，推断内容类型为: {content_type}")
+        
+        class TempUploadFile:
+            def __init__(self, content, content_type):
+                self.content_type = content_type
+                self._content = content
+                self.filename = "uploaded_image"
+            
+            async def read(self):
+                return self._content
+        
+        file = TempUploadFile(body_data, content_type)
+    return await _process_upscale(request, file, url, model, format, quality, half_precision)
+
+async def _process_upscale(
+    request: Request,
+    file,
+    url: str,
+    model: str,
+    format: str,
+    quality: int,
+    half_precision: Optional[bool] = None
+):
+    """
+    处理上传的图片或URL图片的共享逻辑
     """
     try:
         # 获取请求头
@@ -106,16 +174,28 @@ async def upscale_image(
         # 处理文件上传
         else:
             # 验证文件类型
-            if file.content_type not in CONFIG["allowed_mime_types"]:
+            content_type = file.content_type
+            
+            # 特殊处理application/octet-stream
+            if content_type == "application/octet-stream":
+                logger.info("收到application/octet-stream类型的数据，尝试作为图像处理")
+            elif content_type not in CONFIG["allowed_mime_types"]:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Unsupported file type. Allowed types: {', '.join(CONFIG['allowed_mime_types'])}"
                 )
             
-            logger.info(f"处理上传的文件: {file.filename}")
+            logger.info(f"处理上传的文件: {getattr(file, 'filename', 'unknown')}")
             # 读取上传的图片
             contents = await file.read()
-            image = Image.open(io.BytesIO(contents)).convert("RGB")
+            try:
+                image = Image.open(io.BytesIO(contents)).convert("RGB")
+            except Exception as e:
+                logger.error(f"无法打开图像: {str(e)}")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid image data: {str(e)}"
+                )
         
         # 临时覆盖配置，如果指定了半精度参数
         config_override = None

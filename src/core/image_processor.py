@@ -118,7 +118,8 @@ async def process_image(
                 # 保存原始图片为指定输出格式
                 save_kwargs = {}
                 if output_format in ["jpg", "webp"]:
-                    save_kwargs["quality"] = quality
+                    if quality < 100:
+                        save_kwargs["quality"] = quality
                 
                 image.save(output_path, **save_kwargs)
                 logger.info(f"处理完成，保存原图: {output_path}")
